@@ -1,0 +1,311 @@
+* Introduction
+
+Recently, I have tried to learn more about how use Nix to manage a Haskell project. One big project/package that uses Nix is [[https://github.com/reflex-frp/reflex-platform][Reflex]]. I wanted to do something in it, but it is not easily available through [[https://www.stackage.org/lts-14.15/hoogle?q=reflex&exact=on][Stackage]], so I couldn't use Stack to start something new in it. At least, not in the simple way I know of.
+
+So, I tried looking around to see how to start a project managed by Nix.
+
+* The process
+
+** Setting up the environment
+
+I found [[https://wizzup.github.io/posts/nix-haskell-cabal/][this article]] with instructions on how to setup a project that uses [[https://github.com/sol/hpack][hpack]], and used that as a starting point for my setup. When trying to enter a shell with the =ghcjs= compiler, I'd stumble upon various test errors of packages like ~Glob~ and ~hourglass~. I started to disable those tests with the ~haskell.lib.dontCheck~ modifier as each failure occurred. This attempt can be seen at [[./default_old.nix]] .
+
+Around the same time, I discovered [[https://vaibhavsagar.com/blog/2019/10/29/getting-along-with-javascript/][this excellent article]] which showed how to do (almost) the same thing that I wanted. But the author of that article used only ~Cabal~, and I wanted to use ~hpack~, which I was more used to and has very nice ergonomics. So I tried to combine the first and second article approaches to achieve this.
+
+Again, I stumbled upon the test errors from the first approach, and noticed that those errors actually originated from using ~hpack~ instead of only ~Cabal~. I just kept ignoring the failing tests as they came up until I could successfully enter a Nix shell. The final =default.nix= file I ended up with was:
+
+#+BEGIN_SRC nix
+{ pkgs ? import <nixpkgs> {}
+, reflex-platform ? import ./nix/reflex-platform.nix
+, compiler ? "ghcjs"
+}:
+
+reflex-platform.project (_: {
+  withHoogle = false;
+  useWarp = true;
+
+  packages = {
+    reflex-skeleton = ./.;
+  };
+
+  overrides = self: super:
+    let
+      inherit (pkgs.lib.lists) fold;
+    in
+      fold (broken-test-pkg: acc:
+        acc // { ${broken-test-pkg} = pkgs.haskell.lib.dontCheck super.${broken-test-pkg}; }
+      )
+        {} [ "Glob"
+             "hourglass"
+             "unliftio"
+             "x509"
+             "x509-validation"
+             "tls"
+             "mono-traversable"
+             "conduit"
+             "yaml"
+             "hpack"
+           ];
+
+  shells = {
+    ghc   = ["reflex-skeleton"];
+    ghcjs = ["reflex-skeleton"];
+  };
+})
+#+END_SRC
+
+Inside the shell, I could confirm that ~Reflex~ and ~Reflex.Dom~ were accessible:
+
+#+BEGIN_SRC shell
+$ cabal update
+$ cabal new-configure
+$ cabal new-repl
+Build profile: -w ghc-8.6.5 -O1
+In order, the following will be built (use -v for more details):
+ - reflex-skeleton-0.0.0.0 (exe:reflex-skeleton) (configuration changed)
+Configuring executable 'reflex-skeleton' for reflex-skeleton-0.0.0.0..
+Preprocessing executable 'reflex-skeleton' for reflex-skeleton-0.0.0.0..
+GHCi, version 8.6.5: http://www.haskell.org/ghc/  :? for help
+Loaded GHCi configuration from /home/thales/.ghci
+[1 of 2] Compiling Main             ( app/Main.hs, interpreted )
+[2 of 2] Compiling Paths_reflex_skeleton ( /home/thales/dev/haskell/reflex-skeleton/dist-newstyle/build/x86_64-linux/ghc-8.6.5/reflex-skeleton-0.0.0.0/x/reflex-skeleton/build/reflex-skeleton/autogen/Paths_reflex_skeleton.hs, interpreted )
+Ok, two modules loaded.
+> import Reflex
+> import Reflex.Dom
+> :t mainWidget
+mainWidget :: (forall x. Widget x ()) -> IO ()
+#+END_SRC
+
+Success!! 🍻
+
+** Setting up editor integration with Emacs
+
+I had noticed previously while following along with [[https://qfpl.io/projects/reflex/][the Reflex tutorial from QFPL]] that [[https://github.com/chrisdone/intero/][Intero]] did not support Nix. At that time, I tried [[https://github.com/jyp/dante][Dante]], but it didn't feel as good as Intero was for Stack projects.
+
+Later, I installed [[https://github.com/haskell/haskell-ide-engine][HIE]], and it did work incredibly well with common Stack projects and single files. And, supposedly, it should integrate well with Nix. So I'd try and use it to do some ~Reflex~.
+
+Having set up the environment correctly, I opened my Emacs at =app/Main.hs=, which I copied from the second article:
+
+#+BEGIN_SRC haskell
+{-# LANGUAGE OverloadedStrings #-}
+
+module Main where
+
+import Reflex
+import Reflex.Dom
+
+main = mainWidget $ el "div" $ do
+  t <- textArea def
+  el "div" $
+    dynText $ _textArea_value t
+#+END_SRC
+
+And, when I opended it... =Could not find module `Reflex'= would show up at the ~import~ lines... Somehow, LSP/HIE/Flycheck were not interacting very well with my environment.
+
+After a lot of research, and trial and error, I discovered that I needed to add some extra configuration to my Emacs (see below) and also that /a =stack.yaml= file was required/ by Flycheck to work properly!
+
+After those tweaks, it finally worked!
+
+[[./success.png]]
+
+* My final Emacs config
+
+#+BEGIN_SRC elisp
+;; setup-haskell-nix.el
+(require 'nix-haskell-mode)
+(require 'lsp)
+(require 'lsp-haskell)
+(require 'lsp-ui)
+(require 'nix-sandbox)
+
+(add-hook 'haskell-mode-hook 'flycheck-mode)
+(add-hook 'haskell-mode-hook #'lsp)
+
+(add-hook 'haskell-mode-hook
+          (lambda ()
+            (let ((default-nix-wrapper (lambda (args)
+                                         (append
+                                          (append (list "nix-shell" "-I" "." "--command")
+                                                  (list (mapconcat 'identity args " ")))
+                                          (list (nix-current-sandbox))))))
+              (setq-local lsp-haskell-process-wrapper-function default-nix-wrapper)
+              )))
+
+(add-hook 'haskell-mode-hook
+          (lambda ()
+            (setq-local haskell-process-wrapper-function
+                        (lambda (args) (apply 'nix-shell-command (nix-current-sandbox) args)))))
+
+(add-hook 'flycheck-mode-hook
+          (lambda ()
+            (setq-local flycheck-command-wrapper-function
+                        (lambda (command) (apply 'nix-shell-command (nix-current-sandbox) command)))
+            (setq-local flycheck-executable-find
+                        (lambda (cmd) (nix-executable-find (nix-current-sandbox) cmd)))))
+#+END_SRC
+
+** Packages needed
+
+- ~lsp-mode~
+- ~lsp-ui~
+- ~lsp-haskell~
+- ~nix-sandbox~
+- ~nix-haskell-mode~
+
+* Problems encountered
+
+Here are some of the problems I faced when trying to come up with the present setup. May it serve someone (myself included) for future reference.
+
+**** Emacs ~haskell-mode~ and ~flycheck-mode~ configuration
+
+During the trial and error saga, I tried adding various configurations to my Emacs Haskell config. After sorting everything out, I noticed that the minimal config I had to add in order for Emacs to use correctly my Nix environment was:
+
+#+BEGIN_SRC elisp
+;; inspired by https://blog.latukha.com/NixOS-HIE-Emacs/
+(add-hook 'haskell-mode-hook
+          (lambda ()
+            (let ((default-nix-wrapper (lambda (args)
+                                         (append
+                                          (append (list "nix-shell" "-I" "." "--command")
+                                                  (list (mapconcat 'identity args " ")))
+                                          (list (nix-current-sandbox))))))
+              (setq-local lsp-haskell-process-wrapper-function default-nix-wrapper)
+              )))
+#+END_SRC
+
+It makes ~Reflex~ and ~Reflex.Dom~ available for Flycheck. Yet, I'd get some error message about ~haskell-stack-ghc~:
+
+#+BEGIN_QUOTE
+Suspicious state from syntax checker haskell-stack-ghc: Flycheck checker haskell-stack-ghc returned non-zero exit code 1, but its output contained no errors: Could not parse '/home/thales/dev/haskell/reflex-skeleton/stack.yaml':
+Aeson exception:
+Error in $: failed to parse field "snapshot": keys ["snapshot","resolver"] not present
+See http://docs.haskellstack.org/en/stable/yaml_configuration/
+
+Try installing a more recent version of haskell-stack-ghc, and please open a bug report if the issue persists in the latest release.  Thanks!
+#+END_QUOTE
+
+If I'm using Nix to manage the whole environment, should I need to declare a resolver? 🤔
+
+I tried adding:
+
+#+BEGIN_SRC elisp
+;; inspired from https://github.com/travisbhartwell/nix-emacs#flycheck
+(add-hook 'haskell-mode-hook
+          (lambda ()
+            (setq-local haskell-process-wrapper-function
+                        (lambda (args) (apply 'nix-shell-command (nix-current-sandbox) args)))))
+
+(add-hook 'flycheck-mode-hook
+          (lambda ()
+            (setq-local flycheck-command-wrapper-function
+                        (lambda (command) (apply 'nix-shell-command (nix-current-sandbox) command)))
+            (setq-local flycheck-executable-find
+                        (lambda (cmd) (nix-executable-find (nix-current-sandbox) cmd)))))
+#+END_SRC
+
+But the error still persists. It does not prevent me from developing, though.
+
+**** ~cabal-helper-wrapper~ problems
+
+At some point, whenever I tried to open =app/Main.hs=, LSP would report that HIE started successfully, but afterwards crash with something like:
+
+#+BEGIN_QUOTE
+readCreateProcess: /nix/store/jq8x50rkl3cm7cqkj1zsk6kfbb692iwv-cabal-helper-0.9.0.0/bin/cabal-helper-wrapper "--with-ghc=ghc" "--with-ghc-pkg=ghc-pkg" "--with-cabal=cabal" "v1-style" "/home/thales/dev/haskell/reflex-skeleton" "/home/thales/dev/haskell/reflex-skeleton/dist-newstyle/build/x86_64-linux/ghc-8.6.5/reflex-skeleton-0.0.0.0" "package-db-stack" "flags" "compiler-version" "ghc-merged-pkg-options" "config-flags" "non-default-config-flags" "ghc-src-options" "ghc-pkg-options" "ghc-lang-options" "ghc-options" "source-dirs" "entrypoints" "needs-build-output" (exit 1): failed
+#+END_QUOTE
+
+When executing this manually, I got some error saying that a file =.../reflex-skeleton-0.0.0.0/setup-config= (or something like that).
+
+I found this [[https://github.com/haskell/haskell-ide-engine/issues/1407#issuecomment-541208367][issue]] that linked to [[https://github.com/haskell/haskell-ide-engine/issues/1015#issuecomment-450539928][this other issue]] that gave me a hint.
+
+#+BEGIN_SRC shell
+for x in $(find dist-newstyle -name setup-config | grep '/opt/setup-config$' | sed 's|/opt/setup-config$||g'); do
+  ( cd $x
+    ln -fs opt/setup-config setup-config
+  )
+done
+#+END_SRC
+
+I ran:
+
+#+BEGIN_SRC shell
+$ find dist-newstyle -name setup-config
+dist-newstyle/build/x86_64-linux/ghc-8.6.5/reflex-skeleton-0.0.0.0/x/reflex-skeleton/setup-config
+#+END_SRC
+
+What was this =x= in =reflex-skeleton-0.0.0.0/x/reflex-skeleton/=? I was fooling around with ~nix repl~ trying to understand things better, and at one point I assigned something to a variable ~x~, and I guess it had the side effect of building something wrong. Simply removing the directories =dist-newstyle= and =dist= and trying to start Emacs again resolved this problem for me.
+
+**** =Could not find module `Reflex'= problems with Emacs / Flycheck
+
+After fixing the ~cabal-helper-wrapper~ problems, I still got stumped with the following error that occurred at the ~import Reflex~ and ~import Reflex.Dom~ lines:
+
+#+BEGIN_QUOTE
+Could not find module `Reflex'
+Use -v to see a list of the files searched for.
+
+Could not find module `Reflex.Dom'
+Use -v to see a list of the files searched for.
+#+END_QUOTE
+
+Then I tried ~M-x flycheck-verify-setup~ in Emacs:
+
+#+BEGIN_QUOTE
+Syntax checkers for buffer Main.hs in haskell-mode:
+
+First checker to run:
+
+  haskell-stack-ghc
+    - may enable:    yes
+    - executable:    Found at /home/thales/.local/bin/stack
+    - next checkers: haskell-hlint
+
+Checkers that may run as part of the first checker's chain:
+
+  haskell-hlint
+    - may enable:         yes
+    - executable:         Found at /nix/store/c6mrw1iw24gdwvir1mi6ba4wid5ai8j3-ghc-8.6.5-with-packages/bin/hlint
+    - configuration file: Not found
+
+Checkers that could run if selected:
+
+  haskell-ghc  select
+    - may enable:    yes
+    - executable:    Found at /nix/store/c6mrw1iw24gdwvir1mi6ba4wid5ai8j3-ghc-8.6.5-with-packages/bin/ghc
+    - next checkers: haskell-hlint
+
+
+The following syntax checkers are not registered:
+
+  - ats2
+  - lsp-ui
+
+Try adding these syntax checkers to `flycheck-checkers'.  Flycheck
+Mode is enabled.  Use C-u C-c ! x to enable disabled checkers.
+
+--------------------
+
+Flycheck version: 32snapshot (package: 20191108.2129)
+Emacs version:    26.3
+System:           x86_64-pc-linux-gnu
+Window system:    x
+#+END_QUOTE
+
+Notice the first checker:
+
+#+BEGIN_QUOTE
+  haskell-stack-ghc
+    - may enable:    yes
+    - executable:    Found at /home/thales/.local/bin/stack
+    - next checkers: haskell-hlint
+#+END_QUOTE
+
+It seemed to me that Flycheck was depending on Stack for package resolution somehow. At that time, I did not have a =stack.yaml= file in my project.
+
+So, I added one with the contents:
+
+#+BEGIN_SRC yaml
+nix:
+  enable: true
+  shell-file: shell.nix
+#+END_SRC
+
+Restarted Emacs, opened =app/Main.hs= and boom! ~Reflex~ and ~Reflex.Dom~ where found! 🍺

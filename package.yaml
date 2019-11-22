@@ -1,0 +1,30 @@
+name:                reflex-skeleton
+version:             0.0.0.0
+github:              "thalesmg/reflex-skeleton"
+license:             GPL-3
+author:              "Thales Macedo Garitezi"
+maintainer:          "thalesmg@gmail.com"
+copyright:           "GPLv3"
+
+extra-source-files:
+  - Readme.org
+  - CHANGELOG.md
+
+synopsis:            "A Reflex(-DOM) skeleton project"
+category:            Utils
+
+description:         Please see the README on GitHub at <https://github.com/thalesmg/reflex-skeleton#Readme.org>
+
+dependencies:
+  - base >= 4.7 && < 5
+  - reflex
+  - reflex-dom
+
+executables:
+  reflex-skeleton:
+    main: Main.hs
+    source-dirs: app
+    ghc-options:
+      - -threaded
+      - -rtsopts
+      - -with-rtsopts=-N
