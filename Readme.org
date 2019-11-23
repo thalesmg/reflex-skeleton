@@ -57,6 +57,7 @@ reflex-platform.project (_: {
 Inside the shell, I could confirm that ~Reflex~ and ~Reflex.Dom~ were accessible:
 
 #+BEGIN_SRC shell
+$ hpack
 $ cabal update
 $ cabal new-configure
 $ cabal new-repl
