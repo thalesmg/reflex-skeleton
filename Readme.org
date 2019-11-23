@@ -109,6 +109,22 @@ After those tweaks, it finally worked!
 
 [[./success.png]]
 
+** Note about `hpack` and Emacs
+
+Since the Emacs wrappers use `nix-shell` (see bellow), there is no need to run `hpack` to generate the `.cabal` file everytime you change `package.yaml`. The way that the `reflex-platform.project` function is set up, it already detects that there is a `package.yaml` in the root (and changes to it) and runs `hpack` automatically:
+
+#+BEGIN_SRC shell
+ͳ sed -i -e 's/0.0.0.0/1.0.0.0/' package.yaml
+ͳ nix-shell
+building '/nix/store/dk00gx5yc5x2s4rf0x6kan1j2h5qpyl0-cabal2nix-reflex-skeleton.drv'...
+installing
+*** found package.yaml. Using hpack...
+
+[nix-shell:~/dev/haskell/reflex-skeleton]$
+#+END_SRC
+
+Magic! ✨
+
 * My final Emacs config
 
 #+BEGIN_SRC elisp
