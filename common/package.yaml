@@ -1,4 +1,4 @@
-name:                reflex-skeleton
+name:                reflex-skeleton-common
 version:             0.0.0.0
 github:              "thalesmg/reflex-skeleton"
 license:             GPL-3
@@ -17,14 +17,7 @@ description:         Please see the README on GitHub at <https://github.com/thal
 
 dependencies:
   - base >= 4.7 && < 5
-  - reflex
-  - reflex-dom
+  - text
 
-executables:
-  reflex-skeleton:
-    main: Main.hs
-    source-dirs: app
-    ghc-options:
-      - -threaded
-      - -rtsopts
-      - -with-rtsopts=-N
+library:
+  source-dirs: src

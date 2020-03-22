@@ -8,7 +8,9 @@ reflex-platform.project (_: {
   useWarp = true;
 
   packages = {
-    reflex-skeleton = ./.;
+    reflex-skeleton-common = ./common;
+    reflex-skeleton-frontend = ./frontend;
+    reflex-skeleton-backend = ./backend;
   };
 
   overrides = self: super:
@@ -31,7 +33,14 @@ reflex-platform.project (_: {
            ];
 
   shells = {
-    ghc   = ["reflex-skeleton"];
-    ghcjs = ["reflex-skeleton"];
+    ghc   = [
+      "reflex-skeleton-common"
+      "reflex-skeleton-backend"
+      "reflex-skeleton-frontend"
+    ];
+    ghcjs = [
+      "reflex-skeleton-common"
+      "reflex-skeleton-frontend"
+    ];
   };
 })
